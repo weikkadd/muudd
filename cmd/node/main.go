@@ -162,6 +162,11 @@ func run() error {
 	if !ready {
 		return errors.New("Xray startup timeout")
 	}
+	stopNezha, err := startNezha(ctx, dir)
+	if err != nil {
+		return err
+	}
+	defer stopNezha()
 	server := &http.Server{Addr: ":" + s.Port, Handler: handler(s, "http://127.0.0.1:10000"), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- server.ListenAndServe() }()

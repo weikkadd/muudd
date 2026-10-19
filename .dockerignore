@@ -3,3 +3,5 @@
 !go.mod
 !cmd/
 !cmd/**
+!licenses/
+!licenses/**
