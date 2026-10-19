@@ -15,16 +15,21 @@ RUN test "$(uname -m)" = x86_64 \
  && unzip /tmp/xray.zip -d /xray \
  && chmod 0755 /xray/xray
 
-FROM alpine:3.23 AS nezha
-RUN apk add --no-cache ca-certificates curl unzip
-# Official immutable v2.3.5 release; checksum matches its manifest and GitHub asset digest.
+FROM golang:1.26.8-alpine AS nezha
+RUN apk add --no-cache ca-certificates curl patch git
+WORKDIR /src
+# Official v2.3.5 commit; source archive hash verified before the local TCP-only DNS patch.
 RUN test "$(uname -m)" = x86_64 \
  && curl --fail --show-error --location --retry 3 \
-    https://github.com/nezhahq/agent/releases/download/v2.3.5/nezha-agent_linux_amd64.zip -o /tmp/nezha.zip \
- && echo 'cb0ace70db050a8485d6314535922ae7614ad74c89689fdaab76ecfd5a81ba96  /tmp/nezha.zip' | sha256sum -c - \
- && mkdir /nezha \
- && unzip /tmp/nezha.zip -d /nezha \
- && chmod 0755 /nezha/nezha-agent
+    https://codeload.github.com/nezhahq/agent/tar.gz/4979248b05875638534934938623ea5b32edfeca -o /tmp/nezha-source.tar.gz \
+ && echo '90760f2941eea8bdad3d9073634053f5d5af503d3df6f2fde40a3c41cdc69b39  /tmp/nezha-source.tar.gz' | sha256sum -c - \
+ && tar -xzf /tmp/nezha-source.tar.gz --strip-components=1
+COPY patches/nezha-dns-tcp.patch /tmp/nezha-dns-tcp.patch
+RUN patch --batch --fuzz=0 -p1 < /tmp/nezha-dns-tcp.patch \
+ && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOSUMDB=sum.golang.org \
+    go build -mod=readonly -trimpath \
+    -ldflags="-s -w -X github.com/nezhahq/agent/pkg/monitor.Version=2.3.5-dns-tcp1 -X main.arch=amd64" \
+    -o /nezha-agent ./cmd/agent
 
 FROM alpine:3.23
 RUN apk add --no-cache ca-certificates \
@@ -33,7 +38,7 @@ RUN apk add --no-cache ca-certificates \
 COPY --from=launcher /node /usr/local/bin/node
 COPY --from=xray /xray/xray /usr/local/bin/xray
 COPY --from=xray /xray/LICENSE /usr/share/licenses/xray/LICENSE
-COPY --from=nezha /nezha/nezha-agent /usr/local/bin/nezha-agent
+COPY --from=nezha /nezha-agent /usr/local/bin/nezha-agent
 COPY licenses/nezha/LICENSE /usr/share/licenses/nezha-agent/LICENSE
 LABEL org.opencontainers.image.source="https://github.com/weikkadd/muudd" \
       org.opencontainers.image.description="VLESS over WebSocket; bundles unmodified Xray v26.3.27 (MPL-2.0), source: https://github.com/XTLS/Xray-core/tree/v26.3.27"

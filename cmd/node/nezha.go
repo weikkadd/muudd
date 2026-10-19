@@ -24,23 +24,59 @@ var nezhaUUIDRE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 // nezhaConfig is deliberately kept to the small, restrictive agent configuration
 // used by this service. JSON is also valid YAML, as accepted by the agent.
 type nezhaConfig struct {
-	Server                string `json:"server"`
-	ClientSecret          string `json:"client_secret"`
-	UUID                  string `json:"uuid"`
-	TLS                   bool   `json:"tls"`
-	InsecureTLS           bool   `json:"insecure_tls"`
-	Debug                 bool   `json:"debug"`
-	DisableCommandExecute bool   `json:"disable_command_execute"`
-	DisableAutoUpdate     bool   `json:"disable_auto_update"`
-	DisableForceUpdate    bool   `json:"disable_force_update"`
-	DisableNAT            bool   `json:"disable_nat"`
-	DisableSendQuery      bool   `json:"disable_send_query"`
-	GPU                   bool   `json:"gpu"`
-	Temperature           bool   `json:"temperature"`
-	SkipConnectionCount   bool   `json:"skip_connection_count"`
-	SkipProcsCount        bool   `json:"skip_procs_count"`
-	ReportDelay           int    `json:"report_delay"`
-	IPReportPeriod        int    `json:"ip_report_period"`
+	Server                string   `json:"server"`
+	ClientSecret          string   `json:"client_secret"`
+	UUID                  string   `json:"uuid"`
+	TLS                   bool     `json:"tls"`
+	InsecureTLS           bool     `json:"insecure_tls"`
+	Debug                 bool     `json:"debug"`
+	DisableCommandExecute bool     `json:"disable_command_execute"`
+	DisableAutoUpdate     bool     `json:"disable_auto_update"`
+	DisableForceUpdate    bool     `json:"disable_force_update"`
+	DisableNAT            bool     `json:"disable_nat"`
+	DisableSendQuery      bool     `json:"disable_send_query"`
+	GPU                   bool     `json:"gpu"`
+	Temperature           bool     `json:"temperature"`
+	SkipConnectionCount   bool     `json:"skip_connection_count"`
+	SkipProcsCount        bool     `json:"skip_procs_count"`
+	ReportDelay           int      `json:"report_delay"`
+	IPReportPeriod        int      `json:"ip_report_period"`
+	DNS                   []string `json:"dns"`
+}
+
+// systemDNSServers parses resolv.conf nameserver entries, retaining only
+// literal IP addresses and returning Nezha's host:port representation.
+func systemDNSServers(r io.Reader) ([]string, error) {
+	scanner := bufio.NewScanner(r)
+	seen := make(map[string]struct{})
+	servers := make([]string, 0)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if comment := strings.IndexByte(line, '#'); comment >= 0 {
+			line = line[:comment]
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 || fields[0] != "nameserver" {
+			continue
+		}
+		ip := net.ParseIP(fields[1])
+		if ip == nil {
+			continue
+		}
+		server := net.JoinHostPort(ip.String(), "53")
+		if _, ok := seen[server]; ok {
+			continue
+		}
+		seen[server] = struct{}{}
+		servers = append(servers, server)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if len(servers) == 0 {
+		return nil, errors.New("no valid system DNS servers")
+	}
+	return servers, nil
 }
 
 // startNezha starts one agent, or returns a no-op stop function when Nezha is
@@ -65,6 +101,15 @@ func startNezha(ctx context.Context, dir string) (func(), error) {
 	if err != nil || portNumber < 1 || portNumber > 65535 {
 		return func() {}, errors.New("invalid Nezha server address")
 	}
+	resolv, err := os.Open("/etc/resolv.conf")
+	if err != nil {
+		return func() {}, errors.New("could not read system DNS configuration")
+	}
+	dns, dnsErr := systemDNSServers(resolv)
+	closeErr := resolv.Close()
+	if dnsErr != nil || closeErr != nil {
+		return func() {}, errors.New("could not read system DNS configuration")
+	}
 
 	cfg := nezhaConfig{
 		Server: server, ClientSecret: secret, UUID: uuid, TLS: true,
@@ -72,7 +117,7 @@ func startNezha(ctx context.Context, dir string) (func(), error) {
 		DisableAutoUpdate: true, DisableForceUpdate: true, DisableNAT: true,
 		DisableSendQuery: true, GPU: false, Temperature: false,
 		SkipConnectionCount: true, SkipProcsCount: true, ReportDelay: 4,
-		IPReportPeriod: 1800,
+		IPReportPeriod: 1800, DNS: dns,
 	}
 	data, err := json.Marshal(cfg)
 	if err != nil {

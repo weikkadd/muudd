@@ -1,0 +1,12 @@
+--- a/cmd/agent/main.go
++++ b/cmd/agent/main.go
+@@ -105,7 +105,8 @@
+ 		var conn net.Conn
+ 		var err error
+ 		for _, server := range util.RangeRnd(dnsConfig.servers) {
+-			conn, err = d.DialContext(ctx, "udp", server)
++			// Local modification: platform DNS over TCP; no public UDP resolver dependency.
++			conn, err = d.DialContext(ctx, "tcp", server)
+ 			if err == nil {
+ 				return conn, nil
+ 			}

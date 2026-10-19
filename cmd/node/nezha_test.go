@@ -19,6 +19,28 @@ func clearNezhaEnv(t *testing.T) {
 	}
 }
 
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, os.ErrPermission }
+
+func TestSystemDNSServers(t *testing.T) {
+	input := "# comment\n nameserver 192.0.2.1 # inline\nnameserver 2001:db8::1\nnameserver 192.0.2.1\nnameserver not-an-ip\nnameserver 192.0.2.2\n nameserver   2001:db8::2  # comment\n"
+	got, err := systemDNSServers(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"192.0.2.1:53", "[2001:db8::1]:53", "192.0.2.2:53", "[2001:db8::2]:53"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("servers = %#v, want %#v", got, want)
+	}
+	if _, err := systemDNSServers(strings.NewReader("nameserver invalid\nnameserver 192.0.2.3 extra\n search example\n")); err == nil {
+		t.Fatal("expected error for no valid nameserver")
+	}
+	if _, err := systemDNSServers(failingReader{}); err == nil {
+		t.Fatal("expected reader error")
+	}
+}
+
 func TestStartNezhaNoopAndValidation(t *testing.T) {
 	clearNezhaEnv(t)
 	stop, err := startNezha(context.Background(), t.TempDir())
@@ -94,7 +116,7 @@ func TestStartNezhaConfigAndEnvironment(t *testing.T) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Server != "[::1]:443" || cfg.ClientSecret != "unit-test-secret" || !cfg.TLS || cfg.InsecureTLS || cfg.Debug || !cfg.DisableCommandExecute || !cfg.DisableAutoUpdate || !cfg.DisableForceUpdate || !cfg.DisableNAT || !cfg.DisableSendQuery || cfg.GPU || cfg.Temperature || !cfg.SkipConnectionCount || !cfg.SkipProcsCount || cfg.ReportDelay != 4 || cfg.IPReportPeriod != 1800 {
+	if cfg.Server != "[::1]:443" || cfg.ClientSecret != "unit-test-secret" || !cfg.TLS || cfg.InsecureTLS || cfg.Debug || !cfg.DisableCommandExecute || !cfg.DisableAutoUpdate || !cfg.DisableForceUpdate || !cfg.DisableNAT || !cfg.DisableSendQuery || cfg.GPU || cfg.Temperature || !cfg.SkipConnectionCount || !cfg.SkipProcsCount || cfg.ReportDelay != 4 || cfg.IPReportPeriod != 1800 || len(cfg.DNS) == 0 {
 		t.Fatalf("unexpected secure config: %+v", cfg)
 	}
 
