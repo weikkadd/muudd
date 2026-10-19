@@ -1,0 +1,9 @@
+.env
+.env.*
+!.env.example
+/node
+*.log
+*.zip
+config.json
+client.json
+__pycache__/
